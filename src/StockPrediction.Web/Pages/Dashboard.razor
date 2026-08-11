@@ -2,9 +2,11 @@
 @using StockPrediction.Web.Services
 @using Microsoft.AspNetCore.Components.Web
 @rendermode RenderMode.InteractiveServer
-
+@using Microsoft.JSInterop
 @inject ApiService ApiService
-<button class="btn btn-secondary" @onclick="TestClick">Test</button><div class="container mt-4">
+@inject IJSRuntime JSRuntime
+
+<div class="container mt-4">
     <h1 class="mb-3">📈 Stock Prediction Dashboard</h1>
     <p class="text-muted">Enter a stock symbol (e.g., AAPL, TSLA, MSFT)</p>
 
@@ -16,6 +18,11 @@
         <div class="col-md-2">
             <button class="btn btn-primary" @onclick="GeneratePrediction" disabled="@_isLoading">
                 @(_isLoading ? "Loading..." : "Predict")
+            </button>
+        </div>
+        <div class="col-md-2">
+            <button class="btn btn-success" @onclick="ExportToCSV" disabled="@(_predictions == null || _predictions.Count == 0)">
+                📊 Export CSV
             </button>
         </div>
     </div>
@@ -31,6 +38,13 @@
     <!-- Results Section -->
     @if (_predictions != null && _predictions.Count > 0)
     {
+        var change = _predictions.Count > 1
+            ? _predictions.Last().PredictedPrice - _predictions[0].PredictedPrice
+            : 0m;
+        var changePercent = _predictions[0].PredictedPrice != 0
+            ? (change / _predictions[0].PredictedPrice) * 100
+            : 0m;
+
         <div class="row mt-3">
             <!-- Summary Card -->
             <div class="col-md-4 mb-3">
@@ -38,7 +52,16 @@
                     <div class="card-body">
                         <h5 class="card-title">Current Price</h5>
                         <h2 class="card-text">$@_predictions[0].PredictedPrice.ToString("F2")</h2>
-                        <small class="text-white-50">Predicted for @_predictions[0].PredictionDate.ToShortDateString()</small>
+                        <small class="text-white-50">
+                            Predicted for @_predictions[0].PredictionDate.ToShortDateString()
+                            @if (_predictions.Count > 1)
+                            {
+                                <span class="ms-2">
+                                    @(change >= 0 ? "📈" : "📉")
+                                    @changePercent.ToString("F2")%
+                                </span>
+                            }
+                        </small>
                     </div>
                 </div>
             </div>
@@ -125,7 +148,7 @@
             </div>
         </div>
 
-        <!-- Confidence Range Visualization -->
+        <!-- Price Range Visualization -->
         <div class="card mt-3">
             <div class="card-header">
                 <h5 class="mb-0">Price Range Visualization</h5>
@@ -162,6 +185,16 @@
                 }
             </div>
         </div>
+
+        <!-- Chart Section -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Price Forecast Chart</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="priceChart"></canvas>
+            </div>
+        </div>
     }
 
     <!-- Error Message -->
@@ -177,12 +210,12 @@
     private string _errorMessage = string.Empty;
     private List<PredictionDto> _predictions = new();
     private int _dataPointsUsed;
-    private int _riseProbability;
-    private int _dropProbability;
+    private int _riseProbability = 50;
+    private int _dropProbability = 50;
 
     private async Task GeneratePrediction()
     {
-        Console.WriteLine("Button clicked!"); // This will show in Blazor's terminal output
+        Console.WriteLine("Button clicked!");
         if (string.IsNullOrWhiteSpace(_symbol))
         {
             _errorMessage = "Please enter a stock symbol.";
@@ -192,13 +225,64 @@
         _isLoading = true;
         _errorMessage = string.Empty;
         _predictions.Clear();
+        StateHasChanged();
 
         try
         {
             Console.WriteLine($"Calling API for {_symbol}...");
             var response = await ApiService.GeneratePrediction(_symbol);
             Console.WriteLine("API response received.");
-            // ... rest
+            _predictions = response.Predictions;
+            _dataPointsUsed = response.DataPointsUsed;
+
+            // Calculate rise/drop probability
+            if (_predictions.Count > 1)
+            {
+                var firstPrice = _predictions[0].PredictedPrice;
+                var lastPrice = _predictions.Last().PredictedPrice;
+                var priceChange = lastPrice - firstPrice;
+
+                if (_predictions[0].UpperBound.HasValue && _predictions[0].LowerBound.HasValue)
+                {
+                    var range = _predictions[0].UpperBound.Value - _predictions[0].LowerBound.Value;
+                    var relativeRange = (double)(range / _predictions[0].PredictedPrice);
+
+                    if (priceChange > 0)
+                    {
+                        _riseProbability = (int)(60 + (1 - relativeRange) * 30);
+                        _dropProbability = 100 - _riseProbability;
+                    }
+                    else if (priceChange < 0)
+                    {
+                        _dropProbability = (int)(60 + (1 - relativeRange) * 30);
+                        _riseProbability = 100 - _dropProbability;
+                    }
+                    else
+                    {
+                        _riseProbability = 50;
+                        _dropProbability = 50;
+                    }
+                }
+                else
+                {
+                    // Fallback based on direction
+                    if (priceChange > 0)
+                        _riseProbability = 70;
+                    else if (priceChange < 0)
+                        _dropProbability = 70;
+                    else
+                        _riseProbability = _dropProbability = 50;
+                }
+            }
+            else
+            {
+                _riseProbability = 50;
+                _dropProbability = 50;
+            }
+
+            // Render the chart after state update
+            await RenderChart();
+            StateHasChanged();
         }
         catch (Exception ex)
         {
@@ -208,7 +292,44 @@
         finally
         {
             _isLoading = false;
+            StateHasChanged();
         }
+    }
+
+    private async Task RenderChart()
+    {
+        if (_predictions == null || _predictions.Count == 0)
+            return;
+
+        var labels = _predictions.Select(p => p.PredictionDate.ToShortDateString()).ToArray();
+        var prices = _predictions.Select(p => (double)p.PredictedPrice).ToArray();
+        var lowerBounds = _predictions.Select(p => (double)(p.LowerBound ?? p.PredictedPrice * 0.95m)).ToArray();
+        var upperBounds = _predictions.Select(p => (double)(p.UpperBound ?? p.PredictedPrice * 1.05m)).ToArray();
+
+        await JSRuntime.InvokeVoidAsync("renderPriceChart", labels, prices, lowerBounds, upperBounds);
+    }
+
+    private async Task ExportToCSV()
+    {
+        if (_predictions == null || _predictions.Count == 0)
+            return;
+
+        var csv = "Date,Predicted Price,Lower Bound,Upper Bound,Confidence\n";
+        foreach (var p in _predictions)
+        {
+            var confidence = p.LowerBound.HasValue && p.UpperBound.HasValue
+                ? (1 - (p.UpperBound.Value - p.LowerBound.Value) / p.PredictedPrice) * 100
+                : 95;
+            csv += $"{p.PredictionDate.ToShortDateString()}," +
+                   $"{p.PredictedPrice:F2}," +
+                   $"{p.LowerBound?.ToString("F2") ?? "N/A"}," +
+                   $"{p.UpperBound?.ToString("F2") ?? "N/A"}," +
+                   $"{confidence:F0}%\n";
+        }
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
+        var base64 = Convert.ToBase64String(bytes);
+        await JSRuntime.InvokeVoidAsync("downloadFile", base64, "predictions.csv");
     }
 
     private void TestClick()

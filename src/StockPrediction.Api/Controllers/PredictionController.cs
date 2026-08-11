@@ -65,9 +65,9 @@ public class PredictionController : ControllerBase
                     CreatedAt = DateTime.UtcNow
                 };
 
+                Console.WriteLine($"Saving prediction {i+1}: {record.PredictedPrice}");
                 var saved = await _supabaseService.SavePredictionAsync(record);
                 
-                // Map to DTO
                 savedRecords.Add(new PredictionDto
                 {
                     Id = saved.Id,
@@ -90,6 +90,16 @@ public class PredictionController : ControllerBase
         }
         catch (Exception ex)
         {
+            Console.WriteLine($"=== ERROR in GeneratePrediction ===");
+            Console.WriteLine($"Symbol: {symbol}");
+            Console.WriteLine($"Exception Type: {ex.GetType().FullName}");
+            Console.WriteLine($"Message: {ex.Message}");
+            Console.WriteLine($"Stack Trace: {ex.StackTrace}");
+            if (ex.InnerException != null)
+            {
+                Console.WriteLine($"Inner Exception: {ex.InnerException.Message}");
+                Console.WriteLine($"Inner Stack Trace: {ex.InnerException.StackTrace}");
+            }
             return StatusCode(500, $"An error occurred: {ex.Message}");
         }
     }
