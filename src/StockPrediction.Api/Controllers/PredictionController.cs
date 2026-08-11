@@ -16,12 +16,12 @@ namespace StockPrediction.Api.Controllers;
 public class PredictionController : ControllerBase
 {
     private readonly SupabaseService _supabaseService;
-    private readonly YahooFinanceService _yahooService;
+    private readonly AlphaVantageService _alphaVantageService;
 
-    public PredictionController(SupabaseService supabaseService)
+    public PredictionController(SupabaseService supabaseService, AlphaVantageService alphaVantageService)
     {
         _supabaseService = supabaseService;
-        _yahooService = new YahooFinanceService();
+        _alphaVantageService = alphaVantageService;
     }
 
     /// <summary>
@@ -36,8 +36,8 @@ public class PredictionController : ControllerBase
             // 1. Fetch historical data (last 2 years)
             var endDate = DateTime.Now;
             var startDate = endDate.AddYears(-2);
-            var historicalData = await _yahooService.FetchHistoricalDataAsync(symbol, startDate, endDate);
-
+            var historicalData = await _alphaVantageService.FetchHistoricalDataAsync(symbol);
+            
             if (historicalData == null || historicalData.Count < 30)
                 return BadRequest($"Not enough historical data for {symbol}. Need at least 30 days.");
 
