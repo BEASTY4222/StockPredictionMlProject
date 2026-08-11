@@ -1,0 +1,218 @@
+@page "/dashboard"
+@using StockPrediction.Web.Services
+@using Microsoft.AspNetCore.Components.Web
+@rendermode RenderMode.InteractiveServer
+
+@inject ApiService ApiService
+<button class="btn btn-secondary" @onclick="TestClick">Test</button><div class="container mt-4">
+    <h1 class="mb-3">📈 Stock Prediction Dashboard</h1>
+    <p class="text-muted">Enter a stock symbol (e.g., AAPL, TSLA, MSFT)</p>
+
+    <!-- Input Section -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <input type="text" class="form-control" @bind="_symbol" placeholder="Stock Symbol" />
+        </div>
+        <div class="col-md-2">
+            <button class="btn btn-primary" @onclick="GeneratePrediction" disabled="@_isLoading">
+                @(_isLoading ? "Loading..." : "Predict")
+            </button>
+        </div>
+    </div>
+
+    <!-- Loading Indicator -->
+    @if (_isLoading)
+    {
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    }
+
+    <!-- Results Section -->
+    @if (_predictions != null && _predictions.Count > 0)
+    {
+        <div class="row mt-3">
+            <!-- Summary Card -->
+            <div class="col-md-4 mb-3">
+                <div class="card text-white bg-primary">
+                    <div class="card-body">
+                        <h5 class="card-title">Current Price</h5>
+                        <h2 class="card-text">$@_predictions[0].PredictedPrice.ToString("F2")</h2>
+                        <small class="text-white-50">Predicted for @_predictions[0].PredictionDate.ToShortDateString()</small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Probability Card -->
+            <div class="col-md-4 mb-3">
+                <div class="card text-white @(_dropProbability > 50 ? "bg-danger" : "bg-success")">
+                    <div class="card-body">
+                        <h5 class="card-title">Rise / Drop Probability</h5>
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h3>📈 @_riseProbability%</h3>
+                                <small>Rise</small>
+                            </div>
+                            <div>
+                                <h3>📉 @_dropProbability%</h3>
+                                <small>Drop</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Confidence Card -->
+            <div class="col-md-4 mb-3">
+                <div class="card text-white bg-info">
+                    <div class="card-body">
+                        <h5 class="card-title">Data Points</h5>
+                        <h2 class="card-text">@_dataPointsUsed</h2>
+                        <small class="text-white-50">Historical rows used</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Predictions Table -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Forecast Results for @_symbol.ToUpper()</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Predicted Price</th>
+                                <th>Lower Bound</th>
+                                <th>Upper Bound</th>
+                                <th>Confidence</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var p in _predictions)
+                            {
+                                var confidence = p.LowerBound.HasValue && p.UpperBound.HasValue
+                                    ? (1 - (p.UpperBound.Value - p.LowerBound.Value) / p.PredictedPrice) * 100
+                                    : 95;
+                                <tr>
+                                    <td>@p.PredictionDate.ToShortDateString()</td>
+                                    <td><strong>$@p.PredictedPrice.ToString("F2")</strong></td>
+                                    <td>$@p.LowerBound?.ToString("F2")</td>
+                                    <td>$@p.UpperBound?.ToString("F2")</td>
+                                    <td>
+                                        <div class="progress" style="height: 20px;">
+                                            <div class="progress-bar @(confidence > 90 ? "bg-success" : confidence > 70 ? "bg-warning" : "bg-danger")"
+                                                 role="progressbar"
+                                                 style="width: @confidence%;"
+                                                 aria-valuenow="@confidence"
+                                                 aria-valuemin="0"
+                                                 aria-valuemax="100">
+                                                @confidence.ToString("F0")%
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card-footer text-muted">
+                <small>Generated using @_dataPointsUsed historical data points</small>
+            </div>
+        </div>
+
+        <!-- Confidence Range Visualization -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Price Range Visualization</h5>
+            </div>
+            <div class="card-body">
+                @foreach (var p in _predictions)
+                {
+                    var center = (double)p.PredictedPrice;
+                    var lower = (double)(p.LowerBound ?? p.PredictedPrice * 0.95m);
+                    var upper = (double)(p.UpperBound ?? p.PredictedPrice * 1.05m);
+                    var width = upper - lower;
+                    var leftMargin = lower / center * 50;
+
+                    <div class="mb-2">
+                        <span class="badge bg-secondary">@p.PredictionDate.ToShortDateString()</span>
+                        <div class="position-relative" style="height: 30px; background: #f0f0f0; border-radius: 5px;">
+                            <div class="position-absolute top-0 start-0 h-100 bg-success bg-opacity-25"
+                                 style="width: @(width / center * 100)%; left: @leftMargin%; border-radius: 5px;">
+                            </div>
+                            <div class="position-absolute top-50 start-50 translate-middle bg-primary rounded-circle"
+                                 style="width: 12px; height: 12px;">
+                            </div>
+                            <span class="position-absolute top-50 start-0 translate-middle-y ms-1 text-dark small">
+                                $@p.LowerBound?.ToString("F2")
+                            </span>
+                            <span class="position-absolute top-50 start-50 translate-middle text-dark small fw-bold">
+                                $@p.PredictedPrice.ToString("F2")
+                            </span>
+                            <span class="position-absolute top-50 end-0 translate-middle-y me-1 text-dark small">
+                                $@p.UpperBound?.ToString("F2")
+                            </span>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    <!-- Error Message -->
+    @if (!string.IsNullOrEmpty(_errorMessage))
+    {
+        <div class="alert alert-danger mt-3">@_errorMessage</div>
+    }
+</div>
+
+@code {
+    private string _symbol = "AAPL";
+    private bool _isLoading = false;
+    private string _errorMessage = string.Empty;
+    private List<PredictionDto> _predictions = new();
+    private int _dataPointsUsed;
+    private int _riseProbability;
+    private int _dropProbability;
+
+    private async Task GeneratePrediction()
+    {
+        Console.WriteLine("Button clicked!"); // This will show in Blazor's terminal output
+        if (string.IsNullOrWhiteSpace(_symbol))
+        {
+            _errorMessage = "Please enter a stock symbol.";
+            return;
+        }
+
+        _isLoading = true;
+        _errorMessage = string.Empty;
+        _predictions.Clear();
+
+        try
+        {
+            Console.WriteLine($"Calling API for {_symbol}...");
+            var response = await ApiService.GeneratePrediction(_symbol);
+            Console.WriteLine("API response received.");
+            // ... rest
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error: {ex.Message}");
+            _errorMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void TestClick()
+    {
+        Console.WriteLine("Test button clicked!");
+    }
+}
