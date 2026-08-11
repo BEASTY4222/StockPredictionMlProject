@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/StockPrediction.Api/StockPrediction.Api.csproj" />
+    <Project Path="src/StockPrediction.ML/StockPrediction.ML.csproj" />
+    <Project Path="src/StockPrediction.Web/StockPrediction.Web.csproj" />
+  </Folder>
+</Solution>
