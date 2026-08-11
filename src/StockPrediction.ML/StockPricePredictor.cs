@@ -3,113 +3,120 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.ML;
 using Microsoft.ML.Data;
-using Microsoft.ML.Transforms.TimeSeries;
 using StockPrediction.ML.Models;
 
 namespace StockPrediction.ML;
 
 public class StockPricePredictor
 {
-    // The MLContext is the "kitchen" where all ML operations happen.
     private readonly MLContext _mlContext = new MLContext();
-
-    // The trained model. Null until you call Train().
     private ITransformer? _trainedModel;
+    private int _lastIndex = 0;
+    private float _lastClose = 0;
+    private const int ForecastHorizon = 5;
 
-    // The number of days ahead we want to predict.
-    private const int ForecastHorizon = 1;
-
-    /// <summary>
-    /// Trains the time-series forecasting model on historical stock data.
-    /// </summary>
-    /// <param name="historicalData">List of StockData objects (must be sorted by date ascending)</param>
     public void Train(List<StockData> historicalData)
     {
-        // 1. Validate input
         if (historicalData == null || historicalData.Count < 30)
-            throw new ArgumentException("You need at least 30 days of historical data to train a meaningful model.");
+            throw new ArgumentException("Need at least 30 days of data.");
 
-        // 2. Convert our List<StockData> into ML.NET's special data format: IDataView
-        IDataView dataView = _mlContext.Data.LoadFromEnumerable(historicalData);
+        // Create training data with lag features
+        var trainingData = new List<StockDataInput>();
+        for (int i = 3; i < historicalData.Count; i++)
+        {
+            trainingData.Add(new StockDataInput
+            {
+                DaysFromStart = i,
+                Close = (float)historicalData[i].Close,
+                Lag1 = (float)historicalData[i - 1].Close,
+                Lag2 = (float)historicalData[i - 2].Close,
+                Lag3 = (float)historicalData[i - 3].Close
+            });
+        }
 
-        // 3. Define the forecasting pipeline
-        var forecastingPipeline = _mlContext.Forecasting.ForecastBySsa(
-            outputColumnName: nameof(StockPredictionResult.ForecastedPrices),
-            inputColumnName: nameof(StockData.Close),
-            windowSize: 7,              // Use the last 7 days to predict the next day
-            seriesLength: 30,            // Look back 30 days to establish the pattern
-            trainSize: historicalData.Count, // Use ALL available data for training
-            horizon: ForecastHorizon,    // Predict N days into the future
-            confidenceLevel: 0.95f,      // 95% confidence interval
-            confidenceLowerBoundColumn: nameof(StockPredictionResult.ConfidenceLower),
-            confidenceUpperBoundColumn: nameof(StockPredictionResult.ConfidenceUpper)
-        );
+        IDataView dataView = _mlContext.Data.LoadFromEnumerable(trainingData);
 
-        // 4. Train the model!
-        _trainedModel = forecastingPipeline.Fit(dataView);
+        // Build pipeline: concatenate features, then train with Sdca (no MKL)
+        var pipeline = _mlContext.Transforms.Concatenate("Features", 
+                nameof(StockDataInput.Lag1),
+                nameof(StockDataInput.Lag2),
+                nameof(StockDataInput.Lag3))
+            .Append(_mlContext.Regression.Trainers.Sdca(
+                labelColumnName: nameof(StockDataInput.Close),
+                maximumNumberOfIterations: 100));
+
+        _trainedModel = pipeline.Fit(dataView);
+        
+        // Store last known values for prediction
+        _lastClose = (float)historicalData.Last().Close;
+        _lastIndex = historicalData.Count;
     }
 
-    /// <summary>
-    /// Generates a forecast for the next N days based on the trained model.
-    /// </summary>
     public StockPredictionResult Predict()
     {
         if (_trainedModel == null)
-            throw new InvalidOperationException("You must call Train() first before making predictions.");
+            throw new InvalidOperationException("Must call Train() first.");
 
-        // 5. Create a "prediction engine" from the trained model
-        var forecastEngine = _trainedModel.CreateTimeSeriesEngine<StockData, StockPredictionResult>(_mlContext);
+        var engine = _mlContext.Model.CreatePredictionEngine<StockDataInput, StockPredictionOutput>(_trainedModel);
+        
+        // Predict next N days
+        var predictions = new float[ForecastHorizon];
+        float lag1 = _lastClose;
+        float lag2 = _lastClose * 0.99f; // approximate
+        float lag3 = _lastClose * 0.98f;
 
-        // 6. Generate the forecast
-        var prediction = forecastEngine.Predict();
+        for (int i = 0; i < ForecastHorizon; i++)
+        {
+            var input = new StockDataInput
+            {
+                DaysFromStart = _lastIndex + i + 1,
+                Lag1 = lag1,
+                Lag2 = lag2,
+                Lag3 = lag3,
+                Close = 0 // not used for prediction
+            };
 
-        return prediction;
-    }
+            var result = engine.Predict(input);
+            predictions[i] = result.PredictedClose;
 
-    /// <summary>
-    /// Saves the trained model to a .zip file so you don't have to retrain every time.
-    /// </summary>
-    public void SaveModel(string filePath)
-    {
-        if (_trainedModel == null)
-            throw new InvalidOperationException("No trained model to save.");
+            // Shift lags for next iteration
+            lag3 = lag2;
+            lag2 = lag1;
+            lag1 = predictions[i];
+        }
 
-        _mlContext.Model.Save(_trainedModel, null, filePath);
-    }
+        // Generate confidence intervals (simple approximation)
+        var lower = predictions.Select(p => p * 0.96f).ToArray();
+        var upper = predictions.Select(p => p * 1.04f).ToArray();
 
-    /// <summary>
-    /// Loads a previously saved model from a .zip file.
-    /// </summary>
-    public void LoadModel(string filePath)
-    {
-        _trainedModel = _mlContext.Model.Load(filePath, out _);
+        return new StockPredictionResult
+        {
+            ForecastedPrices = predictions,
+            ConfidenceLower = lower,
+            ConfidenceUpper = upper
+        };
     }
 }
 
-// ================================================================
-// DATA MODELS FOR ML.NET (These are separate from StockData)
-// ================================================================
-
-/// <summary>
-/// The input data that ML.NET expects: just the Close price.
-/// Note: ML.NET's time-series algorithms are UNIVARIATE – they ONLY use one column.
-/// </summary>
+// Input model for ML.NET
 public class StockDataInput
 {
-    public float Close { get; set; }
+    public float DaysFromStart { get; set; }
+    public float Close { get; set; } // label
+    public float Lag1 { get; set; }
+    public float Lag2 { get; set; }
+    public float Lag3 { get; set; }
 }
 
-/// <summary>
-/// The output that ML.NET generates after forecasting.
-/// </summary>
+// Output model
+public class StockPredictionOutput
+{
+    [ColumnName("Score")]
+    public float PredictedClose { get; set; }
+}
 public class StockPredictionResult
 {
-    // The array of predicted prices for the next N days (ForecastHorizon).
     public float[] ForecastedPrices { get; set; } = Array.Empty<float>();
-
-    // The lower bound of the 95% confidence interval (array length = ForecastHorizon).
     public float[] ConfidenceLower { get; set; } = Array.Empty<float>();
-
-    // The upper bound of the 95% confidence interval (array length = ForecastHorizon).
     public float[] ConfidenceUpper { get; set; } = Array.Empty<float>();
 }

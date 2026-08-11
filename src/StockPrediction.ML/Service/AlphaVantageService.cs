@@ -23,24 +23,47 @@ public class AlphaVantageService
         try
         {
             // Alpha Vantage API URL for daily adjusted data
-            var url = $"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol={symbol}&apikey={_apiKey}&outputsize=compact";
+            var url = $"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&apikey={_apiKey}&outputsize=compact";
 
             var response = await _httpClient.GetAsync(url);
             response.EnsureSuccessStatusCode();
 
             var json = await response.Content.ReadAsStringAsync();
+            
+            // ======================================================
+            // LOG THE FULL RAW RESPONSE TO THE CONSOLE
+            // ======================================================
+            Console.WriteLine($"========== ALPHA VANTAGE RESPONSE FOR {symbol} ==========");
+            Console.WriteLine(json);
+            Console.WriteLine("===========================================");
+
             var data = JObject.Parse(json);
 
-            // Check for error messages
-            if (data["Error Message"] != null)
-                throw new Exception($"Alpha Vantage error: {data["Error Message"]}");
-
+            // Check for rate limit message
             if (data["Note"] != null)
-                throw new Exception($"Alpha Vantage rate limit: {data["Note"]}");
+            {
+                throw new Exception($"Alpha Vantage rate limit: {data["Note"]}. Please wait 60 seconds and try again.");
+            }
 
+            // Check for error message
+            if (data["Error Message"] != null)
+            {
+                throw new Exception($"Alpha Vantage error: {data["Error Message"]}");
+            }
+
+            // Check for information message
+            if (data["Information"] != null)
+            {
+                throw new Exception($"Alpha Vantage info: {data["Information"]}");
+            }
+
+            // Try to get time series data
             var timeSeries = data["Time Series (Daily)"];
             if (timeSeries == null)
-                throw new Exception("No time series data found.");
+            {
+                var keys = string.Join(", ", data.Properties().Select(p => p.Name));
+                throw new Exception($"No time series data found. Available keys: {keys}. Full response logged above.");
+            }
 
             var result = new List<StockData>();
 
@@ -56,7 +79,7 @@ public class AlphaVantageService
                     High = decimal.Parse(values["2. high"].ToString()),
                     Low = decimal.Parse(values["3. low"].ToString()),
                     Close = decimal.Parse(values["4. close"].ToString()),
-                    Volume = long.Parse(values["6. volume"].ToString())
+                    Volume = long.Parse(values["5. volume"].ToString())
                 });
             }
 

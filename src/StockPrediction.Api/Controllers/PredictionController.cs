@@ -1,13 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using StockPrediction.Api.Models;
 using StockPrediction.Api.Services;
 using StockPrediction.ML;
 using StockPrediction.ML.Models;
-using StockPrediction.ML.Services;  
+using StockPrediction.ML.Services;
 
 namespace StockPrediction.Api.Controllers;
 
@@ -18,44 +17,44 @@ public class PredictionController : ControllerBase
     private readonly SupabaseService _supabaseService;
     private readonly AlphaVantageService _alphaVantageService;
 
-    public PredictionController(SupabaseService supabaseService, AlphaVantageService alphaVantageService)
+    // Constructor now receives both services via dependency injection
+    public PredictionController(
+        SupabaseService supabaseService,
+        AlphaVantageService alphaVantageService)
     {
         _supabaseService = supabaseService;
         _alphaVantageService = alphaVantageService;
     }
 
-    /// <summary>
-    /// Generates a new prediction for a given stock symbol.
-    /// Fetches historical data, trains the model, and saves the result to Supabase.
-    /// </summary>
-    [HttpPost("generate/{symbol}")]
+    [HttpGet("ping")]
+    public IActionResult Ping()
+    {
+        return Ok(new { Message = "Pong! The API is working." });
+    }
+
+   [HttpPost("generate/{symbol}")]
     public async Task<IActionResult> GeneratePrediction(string symbol)
     {
         try
         {
-            // 1. Fetch historical data (last 2 years)
-            var endDate = DateTime.Now;
-            var startDate = endDate.AddYears(-2);
-            var historicalData = await _alphaVantageService.FetchHistoricalDataAsync(symbol);
-            
-            if (historicalData == null || historicalData.Count < 30)
-                return BadRequest($"Not enough historical data for {symbol}. Need at least 30 days.");
+            var localService = new LocalDataService();
+            var datasetPath = Path.Combine(Directory.GetCurrentDirectory(), "Stocks");
+            var historicalData = localService.LoadFromKaggleDataset(symbol, datasetPath);
 
-            // 2. Train the ML model
+            if (historicalData == null || historicalData.Count < 30)
+                return BadRequest($"Not enough historical data for {symbol}. Found {historicalData?.Count ?? 0} rows.");
+
             var predictor = new StockPricePredictor();
             predictor.Train(historicalData);
-
-            // 3. Generate the forecast
             var predictionResult = predictor.Predict();
 
-            // 4. Save each forecasted day to Supabase
-            var savedRecords = new List<PredictionRecord>();
+            var savedRecords = new List<PredictionDto>();
             for (int i = 0; i < predictionResult.ForecastedPrices.Length; i++)
             {
                 var record = new PredictionRecord
                 {
-                    Symbol = symbol.ToUpper(),
-                    PredictionDate = DateTime.Now.AddDays(i + 1).Date, // Tomorrow, then next day, etc.
+                    Symbol = symbol.ToLower(),
+                    PredictionDate = DateTime.Now.AddDays(i + 1).Date,
                     PredictedPrice = (decimal)predictionResult.ForecastedPrices[i],
                     LowerBound = predictionResult.ConfidenceLower?.Length > i 
                         ? (decimal?)predictionResult.ConfidenceLower[i] 
@@ -67,14 +66,26 @@ public class PredictionController : ControllerBase
                 };
 
                 var saved = await _supabaseService.SavePredictionAsync(record);
-                savedRecords.Add(saved);
+                
+                // Map to DTO
+                savedRecords.Add(new PredictionDto
+                {
+                    Id = saved.Id,
+                    Symbol = saved.Symbol,
+                    PredictionDate = saved.PredictionDate,
+                    PredictedPrice = saved.PredictedPrice,
+                    LowerBound = saved.LowerBound,
+                    UpperBound = saved.UpperBound,
+                    CreatedAt = saved.CreatedAt
+                });
             }
 
             return Ok(new
             {
-                Symbol = symbol.ToUpper(),
+                Symbol = symbol.ToLower(),
                 Predictions = savedRecords,
-                Message = $"Successfully generated and saved {savedRecords.Count} predictions."
+                Message = $"Successfully generated and saved {savedRecords.Count} predictions.",
+                DataPointsUsed = historicalData.Count
             });
         }
         catch (Exception ex)
@@ -83,31 +94,49 @@ public class PredictionController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Retrieves all saved predictions for a given symbol.
-    /// </summary>
     [HttpGet("history/{symbol}")]
     public async Task<IActionResult> GetPredictionHistory(string symbol)
     {
-        var predictions = await _supabaseService.GetPredictionsBySymbolAsync(symbol.ToUpper());
+        var predictions = await _supabaseService.GetPredictionsBySymbolAsync(symbol.ToLower());
 
         if (predictions == null || predictions.Count == 0)
             return NotFound($"No predictions found for symbol {symbol}.");
 
-        return Ok(predictions);
+        // Map to DTOs
+        var dtos = predictions.Select(p => new PredictionDto
+        {
+            Id = p.Id,
+            Symbol = p.Symbol,
+            PredictionDate = p.PredictionDate,
+            PredictedPrice = p.PredictedPrice,
+            LowerBound = p.LowerBound,
+            UpperBound = p.UpperBound,
+            CreatedAt = p.CreatedAt
+        }).ToList();
+
+        return Ok(dtos);
     }
 
-    /// <summary>
-    /// Retrieves the most recent prediction for a given symbol.
-    /// </summary>
     [HttpGet("latest/{symbol}")]
     public async Task<IActionResult> GetLatestPrediction(string symbol)
     {
-        var prediction = await _supabaseService.GetLatestPredictionAsync(symbol.ToUpper());
+        var prediction = await _supabaseService.GetLatestPredictionAsync(symbol.ToLower());
 
         if (prediction == null)
             return NotFound($"No predictions found for symbol {symbol}.");
 
-        return Ok(prediction);
+        // Map to DTO
+        var dto = new PredictionDto
+        {
+            Id = prediction.Id,
+            Symbol = prediction.Symbol,
+            PredictionDate = prediction.PredictionDate,
+            PredictedPrice = prediction.PredictedPrice,
+            LowerBound = prediction.LowerBound,
+            UpperBound = prediction.UpperBound,
+            CreatedAt = prediction.CreatedAt
+        };
+
+        return Ok(dto);
     }
 }

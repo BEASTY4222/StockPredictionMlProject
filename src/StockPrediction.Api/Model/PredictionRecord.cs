@@ -7,7 +7,7 @@ namespace StockPrediction.Api.Models;
 [Table("predictions")]
 public class PredictionRecord : BaseModel
 {
-    [PrimaryKey("id", false)]
+    [PrimaryKey("id")]
     public long Id { get; set; }
 
     [Column("symbol")]

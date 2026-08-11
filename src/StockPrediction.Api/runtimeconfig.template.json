@@ -1,0 +1,9 @@
+{
+  "configProperties": {
+    "System.GC.Concurrent": true,
+    "System.GC.Server": true,
+    "COMPlus_EnableHWIntrinsic": "0",
+    "DOTNET_EnableGPU": "0",
+    "MLNET_USE_CUDA": "0"
+  }
+}

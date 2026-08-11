@@ -1,4 +1,5 @@
 using StockPrediction.Web.Components;
+using StockPrediction.Web.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
