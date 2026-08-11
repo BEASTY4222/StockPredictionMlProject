@@ -1,0 +1,98 @@
+# ===============================
+# .NET Core / .NET 8/10 Build Artifacts
+# ===============================
+**/bin/
+**/obj/
+**/publish/
+*.user
+*.suo
+*.cache
+*.pidb
+*.userprefs
+*.sln.ide
+*.sln.docstates
+
+# ===============================
+# Environment & Secrets (CRITICAL)
+# ===============================
+**/appsettings.Development.json
+**/appsettings.Production.json
+**/appsettings.Local.json
+*.local.json
+*.user.json
+.env
+*.env
+**/secrets.json
+
+# ===============================
+# User Secrets (dotnet user-secrets)
+# ===============================
+**/secrets.json
+~/.microsoft/usersecrets/
+~/.aspnet/https/
+
+# ===============================
+# Package Manager / Dependencies
+# ===============================
+packages/
+*.nupkg
+*.snupkg
+NuGet.Config
+*.nuget.targets
+*.nuget.props
+
+# ===============================
+# Test Results
+# ===============================
+TestResults/
+*.coverage
+*.trx
+
+# ===============================
+# IDE / Editor Settings
+# ===============================
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# Visual Studio (Windows)
+.vs/
+*.vspscc
+*.vssscc
+_Resharper.Cache/
+*.sln.opensave
+
+# Rider (JetBrains)
+.idea/
+*.sln.iml
+
+# ===============================
+# Operating System Junk
+# ===============================
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+*.log
+desktop.ini
+
+# ===============================
+# Data Files (Optional - keep or ignore?)
+# ===============================
+# If you download CSV files, ignore them to save space
+*.csv
+*.xlsx
+*.parquet
+
+# However, if you WANT to track a sample CSV for testing, remove the line above.
+
+# ===============================
+# ML.NET Model Files
+# ===============================
+*.zip
+*.onnx
+*.pb
